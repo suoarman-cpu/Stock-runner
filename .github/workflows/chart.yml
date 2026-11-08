@@ -1,0 +1,126 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/chart.yml) — 직접 고치지 말 것
+name: 차트 기법·낙폭 검증
+
+on:
+  workflow_dispatch:
+    inputs:
+      market_only:
+        description: "1이면 시장필터 대안만 검증"
+        default: "0"
+      factor:
+        description: "1이면 추가 인자 검증"
+        default: "0"
+      univ_n:
+        description: "후보 범위 시총 상위 N개 (비우면 200)"
+        default: ""
+      min_cap:
+        description: "시총 하한 (원, 비우면 1000억 · 0이면 전체)"
+        default: ""
+      long:
+        description: "1이면 10년(2016~) 자료로 검증"
+        default: ""
+
+
+concurrency:          # 저장 자료(bt-cache)를 고치는 실행은 한 줄로 — 읽기만 하는 검증(15·18·20)은 동시에 돌아도 됨
+  group: ${{ contains(fromJSON('["15","18","20"]'), github.event.inputs.factor) && format('chart-{0}', github.run_id) || 'bt-cache' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -U pykrx requests pandas
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 분기 재무 수집 (TTM 검증용, 없을 때만)
+        if: github.event.inputs.factor == '8' || github.event.inputs.factor == '9' || github.event.inputs.factor == '10' || github.event.inputs.factor == '11' || github.event.inputs.factor == '12' || github.event.inputs.factor == '13' || github.event.inputs.factor == '14'
+        run: |
+          nohup bash tools/autosave.sh > /tmp/autosave.log 2>&1 &
+          timeout 60m python -u ttm_cache.py || true
+          if [ "${{ github.event.inputs.factor }}" = "13" ]; then timeout 40m python -u earn_dates.py || true; fi
+          pkill -f tools/autosave.sh || true
+          bash tools/cache_save.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - name: 과거 자료를 오늘까지 이어 붙이기 (factor 17 규칙 점검)
+        if: github.event.inputs.factor == '17'
+        run: |
+          nohup bash tools/autosave.sh > /tmp/autosave.log 2>&1 &
+          timeout 100m python -u refresh_cache.py || true
+          pkill -f tools/autosave.sh || true
+          bash tools/cache_save.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - name: 전체 상장사로 자료 넓히기 (factor 16)
+        if: github.event.inputs.factor == '16'
+        run: |
+          nohup bash tools/autosave.sh > /tmp/autosave.log 2>&1 &
+          timeout 70m python -u extend_cache.py || true
+          Q_ALL=1 timeout 100m python -u ttm_cache.py || true
+          pkill -f tools/autosave.sh || true
+          bash tools/cache_save.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - run: timeout 150m python -u chart_research.py
+        if: github.event.inputs.factor != '16' && github.event.inputs.factor != '19' && github.event.inputs.factor != '17'   # 17(규칙 점검)은 자료 갱신만 — 계산은 Claude 작업 공간에서 (GitHub 사용 시간 절약)
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MARKET_ONLY: ${{ github.event.inputs.market_only }}
+          FACTOR: ${{ github.event.inputs.factor }}
+          UNIV_N: ${{ github.event.inputs.univ_n }}
+          MIN_CAP: ${{ github.event.inputs.min_cap }}
+          LONG: ${{ github.event.inputs.long }}
+      - name: 결과 저장
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add results || true
+          git commit -m "차트 기법·낙폭 검증 결과" || true
+          git pull --rebase -X theirs --autostash origin main && git push
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"

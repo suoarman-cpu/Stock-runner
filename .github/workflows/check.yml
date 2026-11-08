@@ -1,0 +1,56 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/check.yml) — 직접 고치지 말 것
+name: 10년 자료 중간 검증
+
+# 지금까지 모인 자료를 다른 출처와 대조 (읽기만 함 — 수집 작업과 동시에 돌아도 됨)
+on:
+  workflow_dispatch:
+
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -U pykrx requests pandas numpy
+      - name: 자료 내려받기
+        run: |
+          bash tools/cache_restore.sh
+          gh release download bt-cache -p pension.pkl -D data/bt_cache --clobber 2>/dev/null || true
+          gh release download bt-cache -p cashflow.pkl -D data/bt_cache --clobber 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - run: python -u long_check.py
+      - name: 결과 저장
+        if: always()
+        run: |
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/long_check.txt && git commit -qm "10년 자료 중간 검증" && git pull --rebase -X theirs --autostash origin main && git push || true
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"

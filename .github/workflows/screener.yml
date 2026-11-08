@@ -1,0 +1,135 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/screener.yml) — 직접 고치지 말 것
+name: 종목 추천
+
+on:
+  schedule:
+    - cron: "37 9 * * 1-5"   # 예비용: 평일 18:37 (한국시간) — 정시 실행은 Claude 예약(18:07)이 담당, 중복 알림은 자동 차단
+
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "시험 실행 (1이면 알림·저장 안 함)"
+        default: "0"
+      ignore_market:
+        description: "시험 실행 시 시장필터 무시 (1)"
+        default: "0"
+      auto:
+        description: "자동 실행 표시 (Claude 예약이 1로 실행 — 휴장일 건너뜀·중복 방지)"
+        default: "0"
+      levels_only:
+        description: "1이면 장중 알림 기준값만 저장"
+        default: "0"
+      score_now:
+        description: "1이면 보유 종목 점수 근거만 텔레그램으로"
+        default: "0"
+      qprobe:
+        description: "1이면 분기 재무 계산 점검"
+        default: "0"
+      fresh_pick:
+        description: "시험 실행 때 1이면 보유 없음(처음 사는 경우)으로 지금 바로 종목 선정"
+        default: "0"
+
+
+concurrency:
+  group: screener
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.fonts
+          key: nanum-fonts-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: |
+          [ -n "$(ls ~/.fonts/NanumGothic*.ttf 2>/dev/null)" ] || { sudo apt-get install -y -qq fonts-nanum >/dev/null && mkdir -p ~/.fonts && cp /usr/share/fonts/truetype/nanum/NanumGothic*.ttf ~/.fonts/; }
+          pip install -q -r requirements.txt
+      - name: 추천 성과 채점 (신호판용, 텔레그램 없이)
+        if: github.event.inputs.levels_only != '1' && github.event.inputs.score_now != '1' && github.event.inputs.qprobe != '1' && github.event.inputs.dry_run != '1'
+        continue-on-error: true
+        run: timeout 8m python -u evaluate.py
+        env:
+          EVAL_SILENT: "1"
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - run: timeout 40m python -u screener.py
+        env:
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          IGNORE_MARKET: ${{ github.event.inputs.ignore_market }}
+          AUTO: ${{ github.event.inputs.auto }}
+          LEVELS_ONLY: ${{ github.event.inputs.levels_only }}
+          SCORE_NOW: ${{ github.event.inputs.score_now }}
+          QPROBE: ${{ github.event.inputs.qprobe }}
+          FRESH_PICK: ${{ github.event.inputs.fresh_pick }}
+      - name: 결과 저장
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add results data || true
+          git commit -m "종목 추천 결과" || true
+          git pull --rebase -X theirs --autostash origin main && git push
+      - name: 폭락 구간 보유 중이면 장중 가격 알림 쉬기 (60일선 매도 안 하는 기간 · GitHub 사용 시간 절약)
+        if: success() && github.event.inputs.dry_run != '1'
+        run: |
+          if grep -q ",폭락," data/portfolio.csv 2>/dev/null; then
+            GH_TOKEN=${{ github.token }} gh workflow disable price_watch.yml -R suoarman-cpu/stock-runner 2>/dev/null && echo "장중 알림 쉼 (폭락 구간 보유)" || true
+          else
+            GH_TOKEN=${{ github.token }} gh workflow enable price_watch.yml -R suoarman-cpu/stock-runner 2>/dev/null && echo "장중 알림 켬" || true
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 교체일이면 규칙 점검(과거 자료 재검증) 시작
+        if: success()
+        run: |
+          [ -f data/rule_check_request.txt ] || exit 0
+          GH_TOKEN=${{ github.token }} gh workflow run chart.yml -R suoarman-cpu/stock-runner -f factor=17 && echo "규칙 점검 시작"
+          git rm -q data/rule_check_request.txt
+          git commit -qm "규칙 점검 요청 처리" && git pull --rebase -X theirs --autostash origin main && git push
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 실패 알림
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            --data-urlencode text="⚠️ [${{ github.workflow }}] 자동 실행 실패 — Claude에게 '실행 실패 확인해'라고 알려주세요" >/dev/null
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"

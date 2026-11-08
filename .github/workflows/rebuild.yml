@@ -1,0 +1,191 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/rebuild.yml) — 직접 고치지 말 것
+name: 데이터 재수집 + DART 재료 검증
+
+on:
+  workflow_dispatch:
+
+
+concurrency:          # 저장 자료(bt-cache)를 고치는 작업은 한 번에 하나씩
+  group: bt-cache
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  prices:
+    name: 1) 주가·재무·스냅샷
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -U pykrx requests pandas
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 중간 저장 켜기 (20분마다 — 끊겨도 이어받기)
+        run: nohup bash tools/autosave.sh > /tmp/autosave.log 2>&1 &
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - run: timeout 300m python -u backtest.py
+        env:
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - name: 데이터 저장
+        if: always()
+        run: pkill -f tools/autosave.sh || true; bash tools/cache_save.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 진행 기록 저장
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          mkdir -p results && cp -f results/progress.txt results/progress_${{ github.job }}.txt 2>/dev/null || true
+          git add results/progress_${{ github.job }}.txt || true
+          git commit -m "진행 기록 (${{ github.job }})" || true
+          git pull --rebase -X theirs --autostash origin main && git push || true
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"
+
+  flows:
+    name: 2) 수급·외국인 보유
+    needs: prices
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -U pykrx requests pandas
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 중간 저장 켜기 (20분마다 — 끊겨도 이어받기)
+        run: nohup bash tools/autosave.sh > /tmp/autosave.log 2>&1 &
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - run: timeout 220m python -u flows_cache.py
+        env:
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+      - run: timeout 90m python -u holdings_cache.py
+        if: always()
+        env:
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+      - name: 데이터 저장
+        if: always()
+        run: pkill -f tools/autosave.sh || true; bash tools/cache_save.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 진행 기록 저장
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          mkdir -p results && cp -f results/progress.txt results/progress_${{ github.job }}.txt 2>/dev/null || true
+          git add results/progress_${{ github.job }}.txt || true
+          git commit -m "진행 기록 (${{ github.job }})" || true
+          git pull --rebase -X theirs --autostash origin main && git push || true
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"
+
+  events:
+    name: 3) DART 공시·내부자 + 검증
+    needs: flows
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -U pykrx requests pandas
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 중간 저장 켜기 (20분마다 — 끊겨도 이어받기)
+        run: nohup bash tools/autosave.sh > /tmp/autosave.log 2>&1 &
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - run: timeout 250m python -u dart_events_cache.py
+        env:
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - name: 데이터 저장
+        if: always()
+        run: pkill -f tools/autosave.sh || true; bash tools/cache_save.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - run: mkdir -p results && timeout 40m python -u events_research.py
+        env:
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: 결과 저장
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add results || true
+          git commit -m "DART 재료 검증 결과" || true
+          git pull --rebase -X theirs --autostash origin main && git push
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"

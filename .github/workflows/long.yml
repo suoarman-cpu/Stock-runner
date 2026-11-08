@@ -1,0 +1,120 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/long.yml) — 직접 고치지 말 것
+name: 10년 검증 자료 모으기
+
+# 거래소(KRX) 요청이 몰리면 로그인이 막히므로 실행마다 요청 수에 상한을 두고 며칠에 나눠 모음
+# 평일은 새벽 1시 37분 한 번, 주말(토·일)은 3시간마다 (평일 저녁 종목 추천과 겹치지 않게)
+on:
+  schedule:
+    - cron: "37 16 * * 1-5"
+    - cron: "37 */3 * * 6,0"
+  workflow_dispatch:
+
+
+concurrency:
+  group: bt-cache
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -U pykrx requests pandas
+      - name: 이미 끝났으면 종료
+        id: chk
+        run: |
+          if [ -f results/long_analyzed.txt ]; then echo "skip=1" >> $GITHUB_OUTPUT; fi
+      - name: 데이터 복원
+        if: steps.chk.outputs.skip != '1'
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 자료 모으기 (상한 있음)
+        if: steps.chk.outputs.skip != '1' && hashFiles('results/long_done.txt') == ''
+        run: |
+          python -u -c "from pykrx import stock" || { echo "거래소 로그인 안 됨 → 이번 실행 건너뜀"; exit 0; }
+          nohup bash tools/autosave.sh > /tmp/autosave.log 2>&1 &   # 20분마다 중간 저장 (연기금·현금흐름 파일 포함)
+          timeout 100m python -u long_cache.py || true
+          HOLD_MAX=2000 timeout 40m python -u holdings_cache.py || true
+          timeout 30m python -u tools/flows_repair.py || true     # 5년 수급 최근 며칠 바로잡기 (10년 수급 합치기 전에)
+          timeout 150m python -u flows_cache.py || true            # 10년 수급: 날짜별 전 종목
+          timeout 40m python -u ttm_cache.py || true
+          gh release download bt-cache -p cashflow.pkl -D data/bt_cache --clobber 2>/dev/null || true
+          timeout 60m python -u cf_cache.py || true
+          gh release upload bt-cache data/bt_cache/cashflow.pkl --clobber || true
+          python -u long_status.py || true
+          gh release download bt-cache -p pension.pkl -D data/bt_cache --clobber 2>/dev/null || true
+          python -u long_check.py || true
+          pkill -f tools/autosave.sh || true
+          bash tools/cache_save.sh
+        env:
+          LONG: "1"
+          SNAP_MAX: "400"
+          PRICE_DAYS_MAX: "4000"
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - name: 다 모였으면 10년 검증 실행 (한 번만)
+        if: steps.chk.outputs.skip != '1' && hashFiles('results/long_done.txt') != ''
+        run: |
+          gh release download bt-cache -p pension.pkl -D data/bt_cache --clobber 2>/dev/null || echo "연기금 자료 없음"
+          timeout 200m python -u chart_research.py && date > results/long_analyzed.txt
+        env:
+          LONG: "1"
+          FACTOR: "18"
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - name: 결과 저장
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add results || true
+          git commit -m "10년 검증 자료·결과" || true
+          git pull --rebase -X theirs --autostash origin main && git push
+      - name: 주말이면 쉬지 않고 바로 다음 회차 (다 모였거나 로그인 막히면 멈춤)
+        if: success() && steps.chk.outputs.skip != '1'
+        run: |
+          [ -f results/long_analyzed.txt ] && exit 0
+          python -u -c "from pykrx import stock" >/dev/null 2>&1 || { echo "로그인 막힘 → 멈춤"; exit 0; }
+          dow=$(TZ=Asia/Seoul date +%u); hr=$(TZ=Asia/Seoul date +%H)
+          if [ "$dow" = 6 ] || [ "$dow" = 7 ] || { [ "$dow" = 1 ] && [ "$hr" -lt 6 ]; }; then
+            GH_TOKEN=${{ github.token }} gh workflow run long.yml -R suoarman-cpu/stock-runner && echo "다음 회차 시작"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"

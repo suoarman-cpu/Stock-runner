@@ -1,0 +1,65 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/price_watch.yml) — 직접 고치지 말 것
+name: 장중 가격 알림
+
+on:
+  schedule:
+    - cron: "5,35 0-6 * * 1-5"   # 한국시간 평일 09:05 ~ 15:35, 30분마다 (GitHub 사정으로 늦어질 수 있음)
+
+  workflow_dispatch:
+    inputs:
+      probe:
+        description: "1이면 네이버 응답 형식만 확인"
+        default: "0"
+
+
+concurrency:
+  group: price
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - run: python3 price_watch.py
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PROBE: ${{ github.event.inputs.probe }}
+      - name: 알림 기록 저장
+        if: always()
+        run: |
+          [ -f data/alert_state.json ] || exit 0
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add data/alert_state.json
+          [ -f results/live.json ] && git add results/live.json
+          [ -f data/alerts_log.json ] && git add data/alerts_log.json
+          git commit -m "장중 알림 기록" || exit 0
+          git pull --rebase -X theirs --autostash origin main && git push || true
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"

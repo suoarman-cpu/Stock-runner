@@ -1,0 +1,71 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/analyze_stock.yml) — 직접 고치지 말 것
+name: 종목 분석
+
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: "종목명 또는 코드 (여러 개는 쉼표로, 최대 5개)"
+        required: true
+
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.fonts
+          key: nanum-fonts-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: |
+          [ -n "$(ls ~/.fonts/NanumGothic*.ttf 2>/dev/null)" ] || { sudo apt-get install -y -qq fonts-nanum >/dev/null && mkdir -p ~/.fonts && cp /usr/share/fonts/truetype/nanum/NanumGothic*.ttf ~/.fonts/; }
+          pip install -q -r requirements.txt
+      - run: timeout 15m python -u analyze_stock.py
+        env:
+          QUERY: ${{ github.event.inputs.query }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: 기업코드 저장 (다음 분석 빠르게)
+        if: always()
+        run: |
+          [ -f data/dart_corp.json ] || exit 0
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add data/dart_corp.json
+          git commit -m "DART 기업코드 저장" || exit 0
+          git pull --rebase -X theirs --autostash origin main && git push || true
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"

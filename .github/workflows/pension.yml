@@ -1,0 +1,84 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/pension.yml) — 직접 고치지 말 것
+name: 연기금 순매수 모으기
+
+# 10년 검증용 연기금 순매수(날짜별 전 종목) — 10년 자료 수집과 따로 동시에, 다 모일 때까지 쉬지 않고 연달아
+# 저장: bt-cache 릴리스의 pension.pkl (본 검증 자료 묶음과 별도 파일이라 서로 덮어쓰지 않음)
+on:
+  workflow_dispatch:
+
+
+concurrency:
+  group: pension
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -U pykrx requests pandas
+      - name: 이어받기
+        run: |
+          mkdir -p data/bt_cache
+          gh release download bt-cache -p pension.pkl -D data/bt_cache 2>/dev/null || echo "처음 시작"
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 모으기
+        id: run
+        run: |
+          python -u -c "from pykrx import stock" || { echo "거래소 로그인 안 됨 → 멈춤"; echo "stop=1" >> $GITHUB_OUTPUT; exit 0; }
+          ( while true; do sleep 900; [ -f data/bt_cache/pension.pkl ] && gh release upload bt-cache data/bt_cache/pension.pkl --clobber >/dev/null 2>&1 && echo "[중간 저장 $(date +%H:%M)]"; done ) &
+          SAVER=$!
+          PENSION_DAYS_MAX=1400 timeout 100m python -u pension_cache.py || true
+          kill $SAVER 2>/dev/null || true
+          gh release upload bt-cache data/bt_cache/pension.pkl --clobber
+          python -u long_check.py > /dev/null || true
+          python - <<'PY' >> $GITHUB_OUTPUT
+          import pickle
+          d = pickle.load(open("data/bt_cache/pension.pkl", "rb"))
+          print("done=1" if len(d) >= 2655 else "done=0")   # 2016~ 거래일 전부
+          PY
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+      - name: 중간 검증 결과 저장
+        if: always()
+        run: |
+          [ -f results/long_check.txt ] || exit 0
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/long_check.txt && git commit -qm "연기금 중간 검증" && git pull --rebase -X theirs --autostash origin main && git push || true
+      - name: 남았으면 바로 다음 회차
+        if: steps.run.outputs.stop != '1' && steps.run.outputs.done != '1'
+        run: GH_TOKEN=${{ github.token }} gh workflow run pension.yml -R suoarman-cpu/stock-runner && echo "다음 회차 시작"
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"
