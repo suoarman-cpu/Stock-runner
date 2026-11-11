@@ -2,6 +2,11 @@
 name: 종목 추천
 
 on:
+  schedule:
+    # 예비용 정식 실행: Claude 예약(18:30)이 사용 한도 등으로 못 돌 때만 실제로 실행됨 — 같은 날 이미 보냈으면 자동으로 건너뜀(data/last_auto.txt)
+    - cron: "50 9 * * 1-5"    # 평일 18:50 (한국시간)
+    - cron: "30 10 * * 1-5"   # 평일 19:30 (한국시간)
+
   workflow_dispatch:
     inputs:
       dry_run:
