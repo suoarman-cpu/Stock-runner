@@ -3,7 +3,10 @@ name: 종목 추천
 
 on:
   schedule:
-    - cron: "37 9 * * 1-5"   # 예비용: 평일 18:37 (한국시간) — 정시 실행은 Claude 예약(18:07)이 담당, 중복 알림은 자동 차단
+    - cron: "7 9 * * 1-5"    # 정시: 평일 18:07 (한국시간) — Claude 예약 실행은 stock-runner 접근 권한을 못 받아 실행 요청을 못 함(2026-11-10 확인), GitHub 예약이 직접 실행
+    - cron: "37 9 * * 1-5"   # 예비용: 평일 18:37 (한국시간) — 중복 알림은 자동 차단(data/last_auto.txt)
+    - cron: "10 0 * * 1-5"   # 장 시작 직후: 평일 09:10 (한국시간) — 신호판 가격·매도 점검만 갱신 (알림·저장 없음)
+    - cron: "40 6 * * 1-5"   # 장 마감 직후: 평일 15:40 (한국시간) — 종가 기준 신호판 갱신 (알림·저장 없음, 정식 실행은 18:07)
 
   workflow_dispatch:
     inputs:
@@ -81,7 +84,7 @@ jobs:
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || ((github.event.schedule == '10 0 * * 1-5' || github.event.schedule == '40 6 * * 1-5') && '1') || '' }}
           IGNORE_MARKET: ${{ github.event.inputs.ignore_market }}
           AUTO: ${{ github.event.inputs.auto }}
           LEVELS_ONLY: ${{ github.event.inputs.levels_only }}
@@ -97,7 +100,7 @@ jobs:
           git commit -m "종목 추천 결과" || true
           git pull --rebase -X theirs --autostash origin main && git push
       - name: 폭락 구간 보유 중이면 장중 가격 알림 쉬기 (60일선 매도 안 하는 기간 · GitHub 사용 시간 절약)
-        if: success() && github.event.inputs.dry_run != '1'
+        if: success() && github.event.inputs.dry_run != '1' && github.event.schedule != '10 0 * * 1-5' && github.event.schedule != '40 6 * * 1-5'
         run: |
           if grep -q ",폭락," data/portfolio.csv 2>/dev/null; then
             GH_TOKEN=${{ github.token }} gh workflow disable price_watch.yml -R suoarman-cpu/stock-runner 2>/dev/null && echo "장중 알림 쉼 (폭락 구간 보유)" || true
