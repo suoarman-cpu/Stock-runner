@@ -22,7 +22,7 @@ on:
 
 
 concurrency:          # 저장 자료(bt-cache)를 고치는 실행은 한 줄로 — 읽기만 하는 검증(15·18·20)은 동시에 돌아도 됨
-  group: ${{ contains(fromJSON('["15","18","20","84","85","86","86s","87"]'), github.event.inputs.factor) && format('chart-{0}', github.run_id) || 'bt-cache' }}
+  group: ${{ contains(fromJSON('["15","18","20","84","85","86","86s","87","88"]'), github.event.inputs.factor) && format('chart-{0}', github.run_id) || 'bt-cache' }}
   cancel-in-progress: false
 
 permissions:
@@ -91,7 +91,7 @@ jobs:
           KRX_PW: ${{ secrets.KRX_PW }}
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
       - name: 미국 지수 받기 (factor 87)
-        if: github.event.inputs.factor == '87'
+        if: github.event.inputs.factor == '87' || github.event.inputs.factor == '88'
         run: timeout 15m python -u tools/us_collect.py
       - run: timeout 150m python -u chart_research.py
         if: github.event.inputs.factor != '16' && github.event.inputs.factor != '19' && github.event.inputs.factor != '17'   # 17(규칙 점검)은 자료 갱신만 — 계산은 Claude 작업 공간에서 (GitHub 사용 시간 절약)
