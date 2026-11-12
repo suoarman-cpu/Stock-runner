@@ -1,0 +1,108 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/cnn.yml) — 직접 고치지 말 것
+name: 차트 이미지 AI 검증
+
+on:
+  workflow_dispatch:
+
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        role: ["0", "1", "2", "3", "4", "f"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -U pykrx requests pandas scikit-learn && pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 미국 지수 받기
+        run: timeout 15m python -u tools/us_collect.py
+      - run: timeout 335m python -u chart_research.py
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          FACTOR: "90:${{ matrix.role }}"
+          LONG: "1"
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"
+
+  evaluate:
+    needs: train
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -U pykrx requests pandas scikit-learn && pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 미국 지수 받기
+        run: timeout 15m python -u tools/us_collect.py
+      - run: timeout 50m python -u chart_research.py
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          FACTOR: "90:e"
+          LONG: "1"
+      - name: 결과 저장
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add results/candidates_cnn_result.json results/candidates_cnn_result.txt || true
+          git commit -m "차트 이미지 AI 검증 결과" || true
+          for i in 1 2 3 4 5 6; do git pull --rebase -X theirs --autostash origin main && git push && break; sleep $((RANDOM % 20 + 5)); done
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"
