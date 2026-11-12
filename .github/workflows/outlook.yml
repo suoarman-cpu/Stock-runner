@@ -1,0 +1,69 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/outlook.yml) — 직접 고치지 말 것
+name: 시장전망 자료 수집
+
+on:
+  workflow_dispatch:
+
+
+concurrency:          # 저장 자료(bt-cache)를 고치는 작업은 한 번에 하나씩
+  group: bt-cache
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  outlook:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -U requests pandas beautifulsoup4
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 중간 저장 켜기 (20분마다 — 끊겨도 이어받기)
+        run: nohup bash tools/autosave.sh > /tmp/autosave.log 2>&1 &
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - run: timeout 100m python -u tools/hk_collect.py
+        env:
+          HK_MIN: "95"
+      - name: 데이터 저장
+        if: always()
+        run: pkill -f tools/autosave.sh || true; bash tools/cache_save.sh; mkdir -p results; cp data/bt_cache/hk_status.txt results/ 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 상태 저장
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add results/hk_status.txt || true
+          git commit -m "시장전망 수집 상태" || true
+          git pull --rebase -X theirs --autostash origin main && git push
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"
