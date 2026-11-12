@@ -1,0 +1,111 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/short.yml) — 직접 고치지 말 것
+name: 공매도 나눠 받기
+
+on:
+  workflow_dispatch:
+
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  shard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 290
+    strategy:
+      fail-fast: false
+      matrix:
+        i: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -U pykrx requests pandas beautifulsoup4
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - run: timeout 275m python -u tools/short_shard.py
+        env:
+          SHARD: ${{ matrix.i }}
+          NSHARD: "12"
+          SHORT_MIN: "265"
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"
+
+  merge:
+    needs: shard
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:          # 저장 자료(bt-cache)를 고치는 작업은 한 번에 하나씩
+      group: bt-cache
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -U pykrx requests pandas beautifulsoup4
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 나눠 받은 파일 내려받기
+        run: for i in $(seq 0 11); do gh release download bt-cache -p "short_part_$i.pkl" -D data/bt_cache --clobber || true; done
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - run: python -u tools/short_shard.py merge
+        env:
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+      - name: 데이터 저장
+        run: bash tools/cache_save.sh; mkdir -p results; cp data/bt_cache/more_status.txt results/
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 상태 저장
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add results/more_status.txt || true
+          git commit -m "공매도 수집 상태" || true
+          for k in 1 2 3 4 5 6; do git pull --rebase -X theirs --autostash origin main && git push && break; sleep $((RANDOM % 10 + 3)); done
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"
