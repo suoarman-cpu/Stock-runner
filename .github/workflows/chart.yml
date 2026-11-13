@@ -22,7 +22,7 @@ on:
 
 
 concurrency:          # 저장 자료(bt-cache)를 고치는 실행은 한 줄로 — 읽기만 하는 검증(15·18·20)은 동시에 돌아도 됨
-  group: ${{ contains(fromJSON('["15","18","20","84","84:5","84:7","85","86","86s","87","88","88:0,1,2","88:3","88:4","88:5","88c:3","89","91","92","95"]'), github.event.inputs.factor) && format('chart-{0}', github.run_id) || 'bt-cache' }}
+  group: ${{ contains(fromJSON('["15","18","20","84","84:5","84:7","85","86","86s","87","88","88:0,1,2","88:3","88:4","88:5","88c:3","89","91","92","95","97"]'), github.event.inputs.factor) && format('chart-{0}', github.run_id) || 'bt-cache' }}
   cancel-in-progress: false
 
 permissions:
@@ -96,8 +96,8 @@ jobs:
       - name: 새 자료 받기·반영·점검 v2 (factor 97)
         if: github.event.inputs.factor == '97'
         run: |
-          timeout 330m python -u tools/collect_v2.py || true
-          bash tools/cache_save.sh
+          if [ -n "${{ github.event.inputs.univ_n }}" ]; then SAMPLE=1 timeout 40m python -u tools/collect_v2.py || true
+          else timeout 330m python -u tools/collect_v2.py || true; bash tools/cache_save.sh; fi
         env:
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
           KRX_ID: ${{ secrets.KRX_ID }}
