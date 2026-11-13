@@ -93,6 +93,16 @@ jobs:
       - name: 미국 지수 받기 (factor 87)
         if: github.event.inputs.factor == '87' || startsWith(github.event.inputs.factor, '88') || github.event.inputs.factor == '89'
         run: timeout 15m python -u tools/us_collect.py
+      - name: 새 자료 받기·반영·점검 v2 (factor 97)
+        if: github.event.inputs.factor == '97'
+        run: |
+          timeout 330m python -u tools/collect_v2.py || true
+          bash tools/cache_save.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
       - name: 10년 주가 원본으로 되돌리기 (factor 96)
         if: github.event.inputs.factor == '96'
         run: |
@@ -120,7 +130,7 @@ jobs:
           KRX_ID: ${{ secrets.KRX_ID }}
           KRX_PW: ${{ secrets.KRX_PW }}
       - run: timeout 300m python -u chart_research.py
-        if: github.event.inputs.factor != '16' && github.event.inputs.factor != '19' && github.event.inputs.factor != '17' && github.event.inputs.factor != '93' && github.event.inputs.factor != '94' && github.event.inputs.factor != '95' && github.event.inputs.factor != '96'   # 17(규칙 점검)은 자료 갱신만 — 계산은 Claude 작업 공간에서 (GitHub 사용 시간 절약)
+        if: github.event.inputs.factor != '16' && github.event.inputs.factor != '19' && github.event.inputs.factor != '17' && github.event.inputs.factor != '93' && github.event.inputs.factor != '94' && github.event.inputs.factor != '95' && github.event.inputs.factor != '96' && github.event.inputs.factor != '97'   # 17(규칙 점검)은 자료 갱신만 — 계산은 Claude 작업 공간에서 (GitHub 사용 시간 절약)
         env:
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
           KRX_ID: ${{ secrets.KRX_ID }}
