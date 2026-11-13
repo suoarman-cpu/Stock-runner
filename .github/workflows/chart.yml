@@ -22,7 +22,7 @@ on:
 
 
 concurrency:          # 저장 자료(bt-cache)를 고치는 실행은 한 줄로 — 읽기만 하는 검증(15·18·20)은 동시에 돌아도 됨
-  group: ${{ contains(fromJSON('["15","18","20","84","84:5","84:7","85","86","86s","87","88","88:0,1,2","88:3","88:4","88:5","88c:3","89","91","92","95","97"]'), github.event.inputs.factor) && format('chart-{0}', github.run_id) || 'bt-cache' }}
+  group: ${{ contains(fromJSON('["15","18","20","84","84:5","84:7","85","86","86s","87","88","88:0,1,2","88:3","88:4","88:5","88c:3","89","91","92","95","97","98"]'), github.event.inputs.factor) && format('chart-{0}', github.run_id) || 'bt-cache' }}
   cancel-in-progress: false
 
 permissions:
@@ -93,6 +93,9 @@ jobs:
       - name: 미국 지수 받기 (factor 87)
         if: github.event.inputs.factor == '87' || startsWith(github.event.inputs.factor, '88') || github.event.inputs.factor == '89'
         run: timeout 15m python -u tools/us_collect.py
+      - name: 새 재무 자료 유효성 점검 v2 (factor 98)
+        if: github.event.inputs.factor == '98'
+        run: timeout 60m python -u tools/check_fin_v2.py
       - name: 새 자료 받기·반영·점검 v2 (factor 97)
         if: github.event.inputs.factor == '97'
         run: |
@@ -130,7 +133,7 @@ jobs:
           KRX_ID: ${{ secrets.KRX_ID }}
           KRX_PW: ${{ secrets.KRX_PW }}
       - run: timeout 300m python -u chart_research.py
-        if: github.event.inputs.factor != '16' && github.event.inputs.factor != '19' && github.event.inputs.factor != '17' && github.event.inputs.factor != '93' && github.event.inputs.factor != '94' && github.event.inputs.factor != '95' && github.event.inputs.factor != '96' && github.event.inputs.factor != '97'   # 17(규칙 점검)은 자료 갱신만 — 계산은 Claude 작업 공간에서 (GitHub 사용 시간 절약)
+        if: github.event.inputs.factor != '16' && github.event.inputs.factor != '19' && github.event.inputs.factor != '17' && github.event.inputs.factor != '93' && github.event.inputs.factor != '94' && github.event.inputs.factor != '95' && github.event.inputs.factor != '96' && github.event.inputs.factor != '97' && github.event.inputs.factor != '98'   # 17(규칙 점검)은 자료 갱신만 — 계산은 Claude 작업 공간에서 (GitHub 사용 시간 절약)
         env:
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
           KRX_ID: ${{ secrets.KRX_ID }}
