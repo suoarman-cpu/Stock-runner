@@ -93,6 +93,13 @@ jobs:
       - name: 미국 지수 받기 (factor 87)
         if: github.event.inputs.factor == '87' || startsWith(github.event.inputs.factor, '88') || github.event.inputs.factor == '89'
         run: timeout 15m python -u tools/us_collect.py
+      - name: 주식 수 변동 가격 보정·점검 (factor 94)
+        if: github.event.inputs.factor == '94'
+        run: |
+          timeout 150m python -u tools/fix_price_events.py
+          bash tools/cache_save.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
       - name: 10년 주가 수정주가 다시 받기·점검 (factor 93)
         if: github.event.inputs.factor == '93'
         run: |
@@ -103,7 +110,7 @@ jobs:
           KRX_ID: ${{ secrets.KRX_ID }}
           KRX_PW: ${{ secrets.KRX_PW }}
       - run: timeout 300m python -u chart_research.py
-        if: github.event.inputs.factor != '16' && github.event.inputs.factor != '19' && github.event.inputs.factor != '17' && github.event.inputs.factor != '93'   # 17(규칙 점검)은 자료 갱신만 — 계산은 Claude 작업 공간에서 (GitHub 사용 시간 절약)
+        if: github.event.inputs.factor != '16' && github.event.inputs.factor != '19' && github.event.inputs.factor != '17' && github.event.inputs.factor != '93' && github.event.inputs.factor != '94'   # 17(규칙 점검)은 자료 갱신만 — 계산은 Claude 작업 공간에서 (GitHub 사용 시간 절약)
         env:
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
           KRX_ID: ${{ secrets.KRX_ID }}
