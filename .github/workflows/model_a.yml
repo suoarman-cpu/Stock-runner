@@ -1,0 +1,77 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/model_a.yml) — 직접 고치지 말 것
+name: 모형 A 매일 추천
+
+on:
+  workflow_dispatch: {}
+
+
+concurrency:          # 저장 자료(bt-cache)를 고치므로 다른 저장 작업과 한 줄로
+  group: bt-cache
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q -r requirements.txt && pip install -q pykrx scipy lightgbm
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 새 주가·재무 받기 (빠진 날만 + 올해 재무 다시)
+        run: timeout 80m python -u tools/collect_v2.py
+        env:
+          DAILY: "1"
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - name: 데이터 저장
+        run: bash tools/cache_save.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 재무 점수 만들기
+        run: python -u tools/chs_score.py score
+      - name: 모형 A 점수·추천
+        run: timeout 20m python -u tools/model_a_daily.py
+        env:
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - name: 결과 저장
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add results/model_a_today.json results/model_a_picks.csv results/forward results/collect_v2_daily.txt || true
+          git commit -m "모형 A 매일 추천" || true
+          for i in 1 2 3 4 5 6; do git pull --rebase -X theirs --autostash origin main && git push && break; sleep $((RANDOM % 20 + 5)); done
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"

@@ -90,6 +90,10 @@ jobs:
           SCORE_NOW: ${{ github.event.inputs.score_now }}
           QPROBE: ${{ github.event.inputs.qprobe }}
           FRESH_PICK: ${{ github.event.inputs.fresh_pick }}
+      - name: 모형 A 추천을 신호판 자료에 넣기 (results/model_a_today.json — 모형 A 매일 실행이 만든 것)
+        if: always()
+        continue-on-error: true
+        run: python -u tools/model_a_merge.py
       - name: 결과 저장
         if: always()
         run: |
