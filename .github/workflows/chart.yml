@@ -22,7 +22,7 @@ on:
 
 
 concurrency:          # 저장 자료(bt-cache)를 고치는 실행은 한 줄로 — 읽기만 하는 검증(15·18·20)은 동시에 돌아도 됨
-  group: ${{ contains(fromJSON('["15","18","20","84","84:5","84:7","85","86","86s","87","88","88:0,1,2","88:3","88:4","88:5","88c:3","89","91","92","92v2","95","97","98","98d","98j","98b","99"]'), github.event.inputs.factor) && format('chart-{0}', github.run_id) || 'bt-cache' }}
+  group: ${{ contains(fromJSON('["15","18","20","84","84:5","84:7","85","86","86s","87","88","88:0,1,2","88:3","88:4","88:5","88c:3","89","91","92","92v2","95","97","98","98d","98j","98b","98c","99"]'), github.event.inputs.factor) && format('chart-{0}', github.run_id) || 'bt-cache' }}
   cancel-in-progress: false
 
 permissions:
@@ -49,7 +49,7 @@ jobs:
           python-version: "3.11"
       - run: pip install -U pykrx requests pandas
       - name: 데이터 복원
-        if: github.event.inputs.factor != '98j' && github.event.inputs.factor != '98b'
+        if: github.event.inputs.factor != '98j' && github.event.inputs.factor != '98b' && github.event.inputs.factor != '98c'
         run: bash tools/cache_restore.sh
         env:
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
@@ -102,6 +102,11 @@ jobs:
       - name: 재현 대조 원인 확인용 공개 자료 받기 (factor 98j)
         if: github.event.inputs.factor == '98j'
         run: timeout 15m python -u tools/jkp_fetch.py
+      - name: DART 재무상태표 일괄 받기 (factor 98c)
+        if: github.event.inputs.factor == '98c'
+        run: timeout 90m python -u tools/dart_bs_collect.py
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
       - name: DART 일괄 다운로드 확인 (factor 98b)
         if: github.event.inputs.factor == '98b'
         run: timeout 10m python -u tools/dart_bulk_probe.py
@@ -152,7 +157,7 @@ jobs:
           KRX_ID: ${{ secrets.KRX_ID }}
           KRX_PW: ${{ secrets.KRX_PW }}
       - run: timeout 300m python -u chart_research.py
-        if: github.event.inputs.factor != '16' && github.event.inputs.factor != '19' && github.event.inputs.factor != '17' && github.event.inputs.factor != '93' && github.event.inputs.factor != '94' && github.event.inputs.factor != '95' && github.event.inputs.factor != '96' && github.event.inputs.factor != '97' && github.event.inputs.factor != '98' && github.event.inputs.factor != '98d' && github.event.inputs.factor != '98j' && github.event.inputs.factor != '98b' && github.event.inputs.factor != '99'   # 17(규칙 점검)은 자료 갱신만 — 계산은 Claude 작업 공간에서 (GitHub 사용 시간 절약)
+        if: github.event.inputs.factor != '16' && github.event.inputs.factor != '19' && github.event.inputs.factor != '17' && github.event.inputs.factor != '93' && github.event.inputs.factor != '94' && github.event.inputs.factor != '95' && github.event.inputs.factor != '96' && github.event.inputs.factor != '97' && github.event.inputs.factor != '98' && github.event.inputs.factor != '98d' && github.event.inputs.factor != '98j' && github.event.inputs.factor != '98b' && github.event.inputs.factor != '98c' && github.event.inputs.factor != '99'   # 17(규칙 점검)은 자료 갱신만 — 계산은 Claude 작업 공간에서 (GitHub 사용 시간 절약)
         env:
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
           KRX_ID: ${{ secrets.KRX_ID }}
