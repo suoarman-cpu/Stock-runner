@@ -15,7 +15,49 @@ defaults:
 
 jobs:
 
-  run:
+  part:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ["ipca", "1", "2", "3", "4", "5", "6"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q pandas numpy scipy lightgbm ipca && pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 재무 점수 만들기
+        run: python -u tools/chs_score.py score
+      - name: 실행 (${{ matrix.job }})
+        run: |
+          if [ "${{ matrix.job }}" = "ipca" ]; then MODE=ipca timeout 170m python -u tools/ipca_cae.py; else MODE=caek KF=${{ matrix.job }} timeout 170m python -u tools/ipca_cae.py; fi
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"
+
+  fin:
+    needs: part
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -33,8 +75,8 @@ jobs:
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
       - name: 재무 점수 만들기
         run: python -u tools/chs_score.py score
-      - name: 실행
-        run: timeout 170m python -u tools/ipca_cae.py || true
+      - name: 오토인코더 마무리·판정
+        run: MODE=caefin timeout 170m python -u tools/ipca_cae.py || true
         env:
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
       - name: 결과 저장
@@ -43,7 +85,7 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git add results/ipca_cae.* || true
-          git commit -m "IPCA·조건부 오토인코더 검증 결과" || true
+          git commit -m "IPCA·오토인코더 검증 결과" || true
           for i in 1 2 3 4 5 6; do git pull --rebase -X theirs --autostash origin main && git push && break; sleep $((RANDOM % 20 + 5)); done
       - name: 실행 기록 저장 (비공개 저장소에만)
         if: always()
