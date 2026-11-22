@@ -1,0 +1,77 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/grade2s.yml) — 직접 고치지 말 것
+name: 후보 1 4단계 등급 학습·확률 보정·문턱 검증 (사전 등록 candidates_grade2s.json)
+
+on:
+  workflow_dispatch:
+    inputs:
+      smoke:
+        description: "1이면 짧은 시험(2020 앞 60일·가짜 20번, 결과 저장 안 함)"
+        default: "0"
+
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q pandas numpy scipy lightgbm scikit-learn
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 재무 점수 만들기
+        run: python -u tools/chs_score.py score
+      - name: 기존 T3 예측·1단 점수·기존 2단 예측 내려받기 (읽기만)
+        run: |
+          mkdir -p data/cnn data/t3s2_ro
+          gh release download cnn-i5 -p model_ta3.npz -D data/cnn --clobber
+          gh release download t3s2 -p stage1_scores.npz -p stage2_pred.npz -D data/t3s2_ro --clobber
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 실행
+        run: |
+          free -g
+          if [ "${{ github.event.inputs.smoke }}" = "1" ]; then SMOKE=1 timeout 60m python -u tools/grade2s.py; else timeout 140m python -u tools/grade2s.py; fi
+      - name: 결과 저장 (새 폴더·새 릴리스만)
+        if: always() && github.event.inputs.smoke != '1'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          if ls data/grade2s/*.npz >/dev/null 2>&1; then
+            gh release view grade2s >/dev/null 2>&1 || gh release create grade2s -t "후보 1 등급 학습 산출물" -n "data/grade2s (candidates_grade2s.json)"
+            gh release upload grade2s data/grade2s/*.npz --clobber
+          fi
+          git add results/grade2s || true
+          git commit -m "후보 1 4단계 등급 학습 결과" || true
+          for i in 1 2 3 4 5 6; do git pull --rebase -X theirs --autostash origin main && git push && break; sleep $((RANDOM % 20 + 5)); done
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"
