@@ -1,0 +1,61 @@
+# 별도 실험(Stock 저장소 불변): 미국·한국 증시 관계 기반 매도 학습. 결과는 암호화된 묶음으로만 남김(공개 저장소).
+name: 미국·한국 같은 업종 증시 관계 매도 학습 (사전 등록 candidates_us_sell_sector_FINAL.json)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: runner
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+          path: stock
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q pandas numpy scipy lightgbm requests
+      - name: 데이터 복원 (읽기만)
+        run: |
+          cd stock && bash tools/cache_restore.sh
+          mkdir -p data/cnn && gh release download cnn-i5 -p model_ta3.npz -D data/cnn --clobber
+          mkdir -p $GITHUB_WORKSPACE/idx && gh release download bt-cache -p 'index_*.pkl' -D $GITHUB_WORKSPACE/idx --clobber
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          GH_REPO: suoarman-cpu/Stock
+      - name: 미국·한국 지수 수집
+        run: |
+          mkdir -p /tmp/out && cd stock
+          OUT=/tmp/out python -u ../runner/us_sell/us_fetch_sector.py
+      - name: 학습·검증
+        run: |
+          cd stock
+          KR=$GITHUB_WORKSPACE/idx
+          free -g
+          OUT=/tmp/out US_CSV=/tmp/out/us_closes.csv KR_DIR=$KR timeout 70m python -u ../runner/us_sell/us_sell_sector.py
+      - name: 결과 암호화·보존 (공개 저장소에는 암호문만)
+        if: always()
+        run: |
+          cp runner/us_sell/candidates_us_sell_sector_FINAL.json /tmp/out/ || true
+          cp /tmp/run.log /tmp/out/run.log || true
+          sha256sum runner/us_sell/*.py runner/us_sell/*.json > /tmp/out/code_sha256.txt || true
+          cd /tmp && tar czf bundle.tgz out
+          openssl cms -encrypt -binary -aes256 -in bundle.tgz -out bundle.enc -outform DER $GITHUB_WORKSPACE/runner/us_sell/us_sell_cert.pem
+          gh release create "us-sell-sector-${{ github.run_id }}" bundle.enc -R ${{ github.repository }} -t "암호화된 실험 묶음" -n "복호화 키는 로컬 보관. 내용은 공개되지 않음"
+          echo "암호문 업로드 완료"
+        env:
+          GH_TOKEN: ${{ github.token }}
