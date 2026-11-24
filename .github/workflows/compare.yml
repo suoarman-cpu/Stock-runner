@@ -43,7 +43,7 @@ jobs:
         run: |
           [ -f /tmp/run.log ] || exit 0
           mkdir -p results/logs
-          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          tail -n 3000 /tmp/run.log | sed -E 's/(로그인 ID: ).*/\1***/' > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
           git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
           git add results/logs >/dev/null 2>&1 || exit 0
           git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
@@ -88,7 +88,7 @@ jobs:
         run: |
           [ -f /tmp/run.log ] || exit 0
           mkdir -p results/logs
-          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          tail -n 3000 /tmp/run.log | sed -E 's/(로그인 ID: ).*/\1***/' > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
           git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
           git add results/logs >/dev/null 2>&1 || exit 0
           git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0

@@ -1,0 +1,84 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/ls_cnn2.yml) — 직접 고치지 말 것
+name: 라벨 파일럿 CNN v2 (A′·B·C, R float64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "fake(가짜 자료 시험) 또는 train(파일럿 학습)"
+        default: "fake"
+      labels:
+        description: "라벨 목록 JSON (Ap=A′, B, C)"
+        default: '["Ap","B","C"]'
+      seeds:
+        description: "시드 목록 JSON (fake 는 [1])"
+        default: "[1]"
+
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        label: ${{ fromJSON(github.event.inputs.labels) }}
+        seed: ${{ fromJSON(github.event.inputs.seeds) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q pandas numpy scipy && pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 기존 모형·예측 보존 대조 (시작)
+        run: python tools/ls_preserve_check.py
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 실행 (${{ github.event.inputs.stage }} · 라벨 ${{ matrix.label }} · 시드 ${{ matrix.seed }})
+        run: timeout 335m python -u tools/cnn_ls2.py ${{ github.event.inputs.stage }} --label ${{ matrix.label }} --seed ${{ matrix.seed }} --minutes 330 || true
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          POP2: "1"
+      - name: 기존 모형·예측 보존 대조 (끝)
+        if: always()
+        run: python tools/ls_preserve_check.py
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 결과 저장
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add results/eval/label_pilot/ls_* || true
+          git commit -m "라벨 파일럿 CNN" || true
+          for i in 1 2 3 4 5 6; do git pull --rebase -X theirs --autostash origin main && git push && break; sleep $((RANDOM % 20 + 5)); done
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log | sed -E 's/(로그인 ID: ).*/\1***/' > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"

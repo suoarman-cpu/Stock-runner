@@ -21,7 +21,7 @@ jobs:
 
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 260
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,21 +35,39 @@ jobs:
         run: bash tools/cache_restore.sh
         env:
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
-      - name: 새 주가·재무 받기 (빠진 날만 + 올해 재무 다시)
-        run: timeout 80m python -u tools/collect_v2.py
+      - name: 주가 받기 (주가만 — 성공해야 다음 단계로)
+        run: timeout 60m python -u tools/collect_v2.py
         env:
+          STAGE: price
           DAILY: "1"
+          MIDSAVE: "0"
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
           KRX_ID: ${{ secrets.KRX_ID }}
           KRX_PW: ${{ secrets.KRX_PW }}
+      - name: 주가 저장 (위 단계가 성공했을 때만 실행됨)
+        run: bash tools/cache_save.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 올해 재무 다시 받기 (실패해도 위에서 저장한 주가는 그대로)
+        id: fin
+        continue-on-error: true
+        run: timeout 170m python -u tools/collect_v2.py
+        env:
+          STAGE: fin
+          DAILY: "1"
+          FIN_BUDGET_MIN: "150"
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
-      - name: 데이터 저장
+      - name: 재무 저장 (재무 단계가 성공했을 때만)
+        if: steps.fin.outcome == 'success'
         run: bash tools/cache_save.sh
         env:
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
       - name: 재무 점수 만들기
+        if: steps.fin.outcome == 'success'
         run: python -u tools/chs_score.py score
       - name: 모형 A 점수·추천
+        if: steps.fin.outcome == 'success'
         run: timeout 20m python -u tools/model_a_daily.py
         env:
           KRX_ID: ${{ secrets.KRX_ID }}
@@ -60,7 +78,7 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add results/model_a_today.json results/model_a_picks.csv results/forward results/collect_v2_daily.txt || true
+          git add results/model_a_today.json results/model_a_picks.csv results/forward results/collect_v2_daily.txt results/collect_v2_daily_price.txt results/collect_v2_daily_fin.txt || true
           git commit -m "모형 A 매일 추천" || true
           for i in 1 2 3 4 5 6; do git pull --rebase -X theirs --autostash origin main && git push && break; sleep $((RANDOM % 20 + 5)); done
       - name: 실행 기록 저장 (비공개 저장소에만)
@@ -69,7 +87,7 @@ jobs:
         run: |
           [ -f /tmp/run.log ] || exit 0
           mkdir -p results/logs
-          tail -n 3000 /tmp/run.log > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          tail -n 3000 /tmp/run.log | sed -E 's/(로그인 ID: ).*/\1***/' > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
           git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
           git add results/logs >/dev/null 2>&1 || exit 0
           git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
