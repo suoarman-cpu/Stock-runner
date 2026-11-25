@@ -54,11 +54,11 @@ jobs:
       - name: 재무 받기 (실패해도 진행, 저장된 재무로 점수 생성)
         id: fin
         continue-on-error: true
-        run: timeout 80m python -u tools/collect_v2.py
+        run: timeout 35m python -u tools/collect_v2.py
         env:
           STAGE: fin
           DAILY: "1"
-          FIN_BUDGET_MIN: "70"
+          FIN_BUDGET_MIN: "30"
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
       - name: 재무 저장
