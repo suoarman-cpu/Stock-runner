@@ -1,0 +1,116 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/t3_daily.yml) — 직접 고치지 말 것
+name: T3 매일 추천 (암호문만 올림)
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "40 9 * * 1-5"   # 평일 18:40 KST
+
+concurrency:
+  group: bt-cache
+  cancel-in-progress: false
+
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q -r requirements.txt && pip install -q pykrx scipy lightgbm cryptography
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 주가 받기
+        run: timeout 60m python -u tools/collect_v2.py
+        env:
+          STAGE: price
+          DAILY: "1"
+          MIDSAVE: "0"
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+      - name: 주가 저장
+        run: bash tools/cache_save.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 재무 받기 (실패해도 진행, 저장된 재무로 점수 생성)
+        id: fin
+        continue-on-error: true
+        run: timeout 80m python -u tools/collect_v2.py
+        env:
+          STAGE: fin
+          DAILY: "1"
+          FIN_BUDGET_MIN: "70"
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - name: 재무 저장
+        if: steps.fin.outcome == 'success'
+        run: bash tools/cache_save.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 재무 점수 만들기
+        run: python -u tools/chs_score.py score
+      - name: 이미 올라간 파일 목록
+        run: |
+          gh api repos/suoarman-cpu/Stock/releases/tags/t3-daily --jq '.assets[].name' > /tmp/existing.txt || : > /tmp/existing.txt
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: T3 추천과 암호화 (평문은 임시 폴더에만 두고 끝나면 삭제)
+        run: |
+          ln -sfn .. kstock/work
+          mkdir -p /tmp/t3out
+          python3 -I kstock/src/auto_daily.py --work . --out /tmp/t3out --cert kstock/config/ops_cert.pem --key-doc kstock/config/phone_key_public.json --existing /tmp/existing.txt
+      - name: 인증값 기록 (공개 저장소에 상태 파일 해시만)
+        run: |
+          S=$(ls /tmp/t3out/status_*.json | head -1); [ -n "$S" ] || exit 0
+          python3 -c "import json,sys;sys.exit(0 if json.load(open('$S',encoding='utf-8'))['상태']=='정상' else 3)" || exit 0
+          D8=$(basename "$S" .json | sed 's/status_//'); H=$(sha256sum "$S" | cut -d' ' -f1)
+          P="repos/${{ github.repository }}/contents/anchors/t3_$D8.sha256"
+          if CUR=$(gh api "$P" --jq .content 2>/dev/null); then
+            [ "$(echo "$CUR" | base64 -d | tr -d '\n ')" = "$H" ] || { echo "기존 인증값이 다름 — 중단"; exit 1; }
+          else
+            gh api -X PUT "$P" -f message="T3 인증값" -f content="$(printf '%s' "$H" | base64 -w0)" > /dev/null
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 암호문과 상태만 Release 에 올림 (이미 있으면 건너뜀)
+        run: |
+          S=$(ls /tmp/t3out/status_*.json | head -1); [ -n "$S" ] || exit 0
+          python3 -c "import json,sys;sys.exit(0 if json.load(open('$S',encoding='utf-8'))['상태']=='정상' else 3)" || exit 0
+          gh api repos/suoarman-cpu/Stock/releases/tags/t3-daily >/dev/null 2>&1 || gh release create t3-daily -R suoarman-cpu/Stock -t t3-daily -n "T3 암호문만"
+          for f in /tmp/t3out/*; do [ -f "$f" ] || continue; b=$(basename "$f"); grep -qx "$b" /tmp/existing.txt && continue; gh release upload t3-daily "$f" -R suoarman-cpu/Stock; done
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 임시 폴더 삭제
+        if: always()
+        run: rm -rf /tmp/t3out /tmp/existing.txt kstock/work
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log | sed -E 's/(로그인 ID: ).*/\1***/' > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"
