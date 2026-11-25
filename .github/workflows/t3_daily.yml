@@ -51,6 +51,8 @@ jobs:
         run: bash tools/cache_save.sh
         env:
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 재무 백업 (실패 시 되돌리기용)
+        run: mkdir -p /tmp/finbk && cp data/bt_cache/v2/fin_raw.pkl data/bt_cache/v2/fin_cov.pkl data/bt_cache/v2/fin_v2.pkl /tmp/finbk/
       - name: 재무 받기 (실패해도 진행, 저장된 재무로 점수 생성)
         id: fin
         continue-on-error: true
@@ -61,6 +63,9 @@ jobs:
           FIN_BUDGET_MIN: "30"
           GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
           DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - name: 재무 수집이 실패·시간 초과면 수집 전 자료로 되돌림 (불완전한 재무로 추천하지 않음)
+        if: steps.fin.outcome != 'success'
+        run: cp /tmp/finbk/fin_raw.pkl /tmp/finbk/fin_cov.pkl /tmp/finbk/fin_v2.pkl data/bt_cache/v2/
       - name: 재무 저장
         if: steps.fin.outcome == 'success'
         run: bash tools/cache_save.sh

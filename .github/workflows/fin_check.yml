@@ -1,0 +1,110 @@
+# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/fin_check.yml) — 직접 고치지 말 것
+name: 재무 수집 점검 (저장 안 함)
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: bt-cache
+  cancel-in-progress: false
+
+
+permissions:
+  contents: write
+  actions: write
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -c "bash --noprofile --norc -eo pipefail {0} >> /tmp/run.log 2>&1"
+
+jobs:
+
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: suoarman-cpu/Stock
+          token: ${{ secrets.STOCK_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q -r requirements.txt && pip install -q pykrx scipy lightgbm
+      - name: 데이터 복원
+        run: bash tools/cache_restore.sh
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 백업과 수집 전 요약
+        run: |
+          mkdir -p /tmp/finbk && cp data/bt_cache/v2/fin_raw.pkl data/bt_cache/v2/fin_cov.pkl data/bt_cache/v2/fin_v2.pkl /tmp/finbk/
+          python tools/fin_verify.py summary /tmp/before.json
+          tar czf /tmp/fin_backup.tar.gz -C /tmp finbk
+          gh api repos/suoarman-cpu/Stock/releases/tags/fin-backup >/dev/null 2>&1 || gh release create fin-backup -R suoarman-cpu/Stock -t fin-backup -n "재무 백업"
+          gh release upload fin-backup /tmp/fin_backup.tar.gz -R suoarman-cpu/Stock --clobber
+          ls -la /tmp/fin_backup.tar.gz
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 재무 수집 (35분 제한)
+        id: fin
+        continue-on-error: true
+        run: |
+          date +%s > /tmp/t0; date '+%F %T' > /tmp/t0s
+          set +e; timeout 35m python -u tools/collect_v2.py; echo $? > /tmp/rc; set -e
+          date +%s > /tmp/t1; date '+%F %T' > /tmp/t1s
+          cp /tmp/run.log /tmp/fin_run.log
+          [ "$(cat /tmp/rc)" = "0" ]
+        env:
+          STAGE: fin
+          DAILY: "1"
+          FIN_BUDGET_MIN: "30"
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      - name: 점검 보고서 만들기
+        if: always()
+        run: |
+          python tools/fin_verify.py summary /tmp/after.json
+          python tools/fin_verify.py compare /tmp/before.json /tmp/after.json /tmp/fin_run.log /tmp/cmp.json
+          python - <<'PY'
+          import json
+          c=json.load(open('/tmp/cmp.json')); g=lambda p:open(p).read().strip()
+          c.update(시작=g('/tmp/t0s'),종료=g('/tmp/t1s'),초=int(g('/tmp/t1'))-int(g('/tmp/t0')),종료코드=int(g('/tmp/rc')))
+          json.dump(c,open('/tmp/fin_check_report.json','w'),ensure_ascii=False,indent=1)
+          PY
+          mkdir -p results; cp /tmp/fin_check_report.json results/fin_check_20261125.json; tail -n 80 /tmp/fin_run.log > results/fin_check_log_20261125.txt
+      - name: 저장 후 다시 읽기 시험 (bt-cache 는 건드리지 않음)
+        if: steps.fin.outcome == 'success'
+        run: |
+          mkdir -p /tmp/aft && cp data/bt_cache/v2/fin_raw.pkl data/bt_cache/v2/fin_cov.pkl data/bt_cache/v2/fin_v2.pkl /tmp/aft/
+          (cd /tmp && sha256sum aft/* > aft.sha && tar czf fin_after.tar.gz aft)
+          gh api repos/suoarman-cpu/Stock/releases/tags/fin-check >/dev/null 2>&1 || gh release create fin-check -R suoarman-cpu/Stock -t fin-check -n "재무 점검 결과"
+          gh release upload fin-check /tmp/fin_after.tar.gz -R suoarman-cpu/Stock --clobber
+          mkdir -p /tmp/rd && gh release download fin-check -R suoarman-cpu/Stock -p fin_after.tar.gz -D /tmp/rd --clobber
+          tar xzf /tmp/rd/fin_after.tar.gz -C /tmp/rd && (cd /tmp/rd && sed 's#aft/#aft/#' /tmp/aft.sha | sha256sum -c -) | tee /tmp/rt.txt
+          python - <<'PY'
+          import pandas as pd, json
+          R=pd.read_pickle('/tmp/rd/aft/fin_raw.pkl'); F=pd.read_pickle('/tmp/rd/aft/fin_v2.pkl')
+          r=json.load(open('results/fin_check_20261125.json')); r['재읽기']=dict(키수=len(R),fin_v2행=len(F),해시검사=open('/tmp/rt.txt').read().count('OK'))
+          json.dump(r,open('results/fin_check_20261125.json','w'),ensure_ascii=False,indent=1)
+          PY
+        env:
+          GH_TOKEN: ${{ secrets.STOCK_TOKEN }}
+      - name: 보고서 저장 (비공개 저장소)
+        if: always()
+        run: |
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/fin_check_20261125.json results/fin_check_log_20261125.txt || true
+          git commit -qm "재무 수집 점검 결과" || true
+          for i in 1 2 3 4 5 6; do git pull -q --rebase -X theirs --autostash origin main && git push -q && break; sleep 8; done
+      - name: 실행 기록 저장 (비공개 저장소에만)
+        if: always()
+        shell: bash
+        run: |
+          [ -f /tmp/run.log ] || exit 0
+          mkdir -p results/logs
+          tail -n 3000 /tmp/run.log | sed -E 's/(로그인 ID: ).*/\1***/' > "results/logs/${{ github.workflow }}-${{ github.job }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add results/logs >/dev/null 2>&1 || exit 0
+          git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs --autostash origin main >/dev/null 2>&1; git push -q >/dev/null 2>&1 && break; sleep $((RANDOM % 10 + 3)); done
+          echo "기록 저장 완료"
