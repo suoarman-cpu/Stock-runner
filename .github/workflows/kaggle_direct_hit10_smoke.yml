@@ -30,7 +30,7 @@ jobs:
         with:
           repository: suoarman-cpu/Stock
           token: ${{ secrets.STOCK_GITHUB_TOKEN_ROTATED }}
-          ref: 621d18b
+          ref: 621d18b7a8f04b339a8e9ba71304675ee468132e
 
       - uses: actions/setup-python@v5
         with:
