@@ -16,8 +16,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Kaggle CLI 설치
-        run: python -m pip install --disable-pip-version-check kaggle
+      - name: Kaggle CLI 및 누락 의존성 설치
+        run: python -m pip install --disable-pip-version-check kaggle six
 
       - name: Kaggle API 인증 및 내 노트북 목록 확인
         env:
