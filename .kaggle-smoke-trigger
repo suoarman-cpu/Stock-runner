@@ -1,1 +1,1 @@
-Second diagnostic-safe direct_hit10 offline Smoke attempt.
+Third run: remove unnecessary NumPy dependency from data preparation.
