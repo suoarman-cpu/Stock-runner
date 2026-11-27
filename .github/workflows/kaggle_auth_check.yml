@@ -1,0 +1,33 @@
+name: Kaggle 연결 확인 (실행 없음)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kaggle-auth-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Python 준비
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Kaggle CLI 설치
+        run: python -m pip install --disable-pip-version-check kaggle
+
+      - name: Kaggle API 인증 및 내 노트북 목록 확인
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${KAGGLE_API_TOKEN:-}" ]; then
+            echo "::error::GitHub Actions Secret KAGGLE_API_TOKEN이 없습니다."
+            exit 1
+          fi
+          # 실행/업로드/수정은 하지 않고, 인증과 계정의 노트북 목록 조회만 확인
+          kaggle kernels list --mine --page-size 5 --csv
