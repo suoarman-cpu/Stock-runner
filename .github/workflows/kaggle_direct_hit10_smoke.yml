@@ -84,7 +84,32 @@ jobs:
               exit 0
             fi
             if echo "$status" | grep -Eqi 'ERROR|FAILED|CANCELLED'; then
-              echo "::error::Kaggle 실행 실패"
+              echo "::error::Kaggle 실행 실패 — 진단 출력 수집"
+              mkdir -p /tmp/direct-hit10-failure
+              kaggle kernels output "$ref" -p /tmp/direct-hit10-failure || true
+              python - <<'PY'
+          import pathlib,json
+          root=pathlib.Path("/tmp/direct-hit10-failure")
+          files=[p for p in root.rglob("*") if p.is_file()]
+          print("실패 시 다운로드 파일:", [str(p.relative_to(root)) for p in files][:100])
+          for p in files:
+              if p.suffix.lower() in (".txt",".log",".json",".ipynb"):
+                  try:
+                      obj=json.loads(p.read_text(errors="replace")) if p.suffix.lower() in (".json",".ipynb") else None
+                      if isinstance(obj,dict) and "cells" in obj:
+                          for ci,cell in enumerate(obj.get("cells",[])):
+                              for out in cell.get("outputs",[]):
+                                  txt="".join(out.get("text",[])) if isinstance(out.get("text"),list) else str(out.get("text",""))
+                                  if txt: print(f"[{p.name} cell {ci}] {txt[:4000]}")
+                                  for item in out.get("data",{}).values():
+                                      if isinstance(item,list): print(f"[{p.name} cell {ci}] {''.join(item)[:4000]}")
+                      elif obj is not None:
+                          print(f"[{p.name}] {json.dumps(obj,ensure_ascii=False)[:4000]}")
+                      else:
+                          print(f"[{p.name}] {p.read_text(errors='replace')[:4000]}")
+                  except Exception as e:
+                      print(f"[{p.name}] 진단 읽기 실패: {e}")
+          PY
               exit 1
             fi
             sleep 60
