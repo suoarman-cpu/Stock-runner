@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: suoarman-cpu/Stock
-          token: \${{ secrets.STOCK_TOKEN }}
+          token: ${{ secrets.STOCK_TOKEN }}
           ref: experiment/kaggle-direct-hit10-v1
 
       - uses: actions/setup-python@v5
@@ -41,8 +41,8 @@ jobs:
 
       - name: 데이터·코드 전달 및 오프라인 Smoke 실행
         env:
-          KAGGLE_API_TOKEN: \${{ secrets.KAGGLE_API_TOKEN }}
-          STOCK_TOKEN: \${{ secrets.STOCK_TOKEN }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          STOCK_TOKEN: ${{ secrets.STOCK_TOKEN }}
         run: python -u kaggle/direct_hit10/runner_build.py
       - name: 실행 기록 저장 (비공개 저장소에만)
         if: always()
@@ -50,7 +50,7 @@ jobs:
         run: |
           [ -f /tmp/run.log ] || exit 0
           mkdir -p results/logs
-          tail -n 3000 /tmp/run.log | sed -E 's/(로그인 ID: ).*/\\1***/' > "results/logs/\${{ github.workflow }}-\${{ github.job }}-\${{ github.run_id }}\${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
+          tail -n 3000 /tmp/run.log | sed -E 's/(로그인 ID: ).*/\\1***/' > "results/logs/${{ github.workflow }}-${{ github.job }}-${{ github.run_id }}${{ strategy.job-index != '' && format('-{0}', strategy.job-index) || '' }}.log"
           git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
           git add results/logs >/dev/null 2>&1 || exit 0
           git commit -qm "실행 기록" >/dev/null 2>&1 || exit 0
