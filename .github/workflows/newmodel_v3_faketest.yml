@@ -22,6 +22,10 @@ jobs:
         with:
           repository: suoarman-cpu/Stock
           token: ${{ secrets.STOCK_TOKEN }}
+      - name: 가짜 시험 브랜치 가져오기
+        run: |
+          git fetch --no-tags origin experiment/newmodel-faketest-v1
+          git checkout --detach FETCH_HEAD
       - name: Python 설정
         uses: actions/setup-python@v5
         with:
