@@ -103,6 +103,7 @@ jobs:
               print("다운로드 파일:", [str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()][:80])
               raise SystemExit("run_summary.json이 없어 Smoke 결과를 확정할 수 없습니다.")
           data=json.loads(files[0].read_text())
-          print("===== direct_hit10 SMOKE SUMMARY =====")
-          print(json.dumps(data,ensure_ascii=False,indent=2)[:12000])
+          safe={k:data.get(k) for k in ("상태","사유","smoke","총경과초","최대메모리MB","cpu시간초","threads","단계","연도","모델파일수")}
+          print("===== direct_hit10 SMOKE SAFE SUMMARY =====")
+          print(json.dumps(safe,ensure_ascii=False,indent=2)[:5000])
           PY
