@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Kaggle CLI 설치
-        run: python -m pip install --disable-pip-version-check kaggle
+        run: python -m pip install --disable-pip-version-check kaggle six
       - name: 내 노트북 메타데이터 및 첫 셀 확인
         env:
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
