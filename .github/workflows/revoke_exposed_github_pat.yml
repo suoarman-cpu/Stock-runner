@@ -1,0 +1,79 @@
+name: Revoke exposed GitHub PAT
+
+on:
+  push:
+    paths:
+      - .github/workflows/revoke_exposed_github_pat.yml
+
+permissions:
+  contents: read
+
+jobs:
+  revoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Revoke the exact PAT previously uploaded to Kaggle
+        env:
+          EXPOSED_GITHUB_TOKEN: ${{ secrets.STOCK_GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          token = os.environ.get("EXPOSED_GITHUB_TOKEN", "")
+          if not token:
+              raise SystemExit("STOP: STOCK_GITHUB_TOKEN secret is absent; no credential was submitted.")
+
+          # GitHub's credential-revocation endpoint explicitly requires an unauthenticated request.
+          body = json.dumps({"credentials": [token]}).encode()
+          req = urllib.request.Request(
+              "https://api.github.com/credentials/revoke",
+              data=body,
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Content-Type": "application/json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+              method="POST",
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  revoke_status = response.status
+          except urllib.error.HTTPError as exc:
+              revoke_status = exc.code
+
+          print(f"Credential revocation API HTTP status: {revoke_status}")
+          if revoke_status != 202:
+              raise SystemExit("STOP: GitHub did not accept the revocation request.")
+
+          # Verify that the exact credential no longer authenticates.
+          verify_req = urllib.request.Request(
+              "https://api.github.com/user",
+              headers={
+                  "Authorization": "Bearer " + token,
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+              method="GET",
+          )
+          for attempt in range(1, 11):
+              try:
+                  with urllib.request.urlopen(verify_req, timeout=20) as response:
+                      status = response.status
+              except urllib.error.HTTPError as exc:
+                  status = exc.code
+              print(f"Credential invalidation verification {attempt}/10: HTTP {status}")
+              if status == 401:
+                  print("VERIFIED: the exposed STOCK_GITHUB_TOKEN is no longer accepted by GitHub.")
+                  raise SystemExit(0)
+              if status != 200:
+                  raise SystemExit(f"STOP: unexpected verification status {status}; do not infer revocation.")
+              time.sleep(2)
+          raise SystemExit("STOP: GitHub accepted the credential revocation request, but token invalidation was not yet verified.")
+          PY
