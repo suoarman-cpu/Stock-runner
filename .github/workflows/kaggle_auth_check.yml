@@ -2,6 +2,10 @@ name: Kaggle 연결 확인 (실행 없음)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/kaggle_auth_check.yml'
 
 permissions:
   contents: read
