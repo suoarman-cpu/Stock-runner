@@ -1,1 +1,1 @@
-Fifth run: expose only sanitized Kaggle API error classification.
+Sixth run: install missing six dependency for Kaggle CLI.
