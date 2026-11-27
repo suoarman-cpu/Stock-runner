@@ -69,7 +69,7 @@ jobs:
           (out/code).write_text(json.dumps(nb,ensure_ascii=False))
           meta={
             "id":"suoarman/direct-hit10-smoke",
-            "title":"direct_hit10 제한 Smoke 시험",
+            "title":"direct-hit10-smoke",
             "code_file":code,
             "language":"python",
             "kernel_type":"notebook",
@@ -101,10 +101,24 @@ jobs:
           }
           JSON
           if kaggle datasets status suoarman/stock-github-auth >/dev/null 2>&1; then
-            kaggle datasets version -p /tmp/stock-github-auth -m "Refresh private read-only access credential" --delete-old-versions -q -t
+            kaggle datasets version -p /tmp/stock-github-auth -m "Refresh private read-only access credential" -q -t
           else
             kaggle datasets create -p /tmp/stock-github-auth -q -t
           fi
+          # Dataset creation/version processing is asynchronous. Do not push a kernel
+          # until Kaggle confirms that credential.txt is actually available as input.
+          ready=0
+          for i in $(seq 1 60); do
+            listing="$(kaggle datasets files suoarman/stock-github-auth 2>&1 || true)"
+            if echo "$listing" | grep -Fq "credential.txt"; then
+              echo "Private credential dataset is ready."
+              ready=1
+              break
+            fi
+            echo "[$i/60] Waiting for private credential dataset publication..."
+            sleep 10
+          done
+          test "$ready" -eq 1 || { echo "::error::Private Kaggle credential dataset did not become available"; exit 1; }
           rm -f /tmp/stock-github-auth/credential.txt
 
       - name: Kaggle에 Smoke 버전 제출
