@@ -4,6 +4,9 @@ name: direct_hit10 Kaggle 오프라인 Smoke
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/kaggle_direct_hit10_smoke.yml
 
 concurrency:
   group: direct-hit10-kaggle-offline
