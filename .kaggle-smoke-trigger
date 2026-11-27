@@ -1,1 +1,1 @@
-Sixth run: install missing six dependency for Kaggle CLI.
+Seventh run: treat Kaggle's inaccessible-new-dataset 403 as absent, then create.
