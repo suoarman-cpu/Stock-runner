@@ -1,29 +1,36 @@
-# 자동 생성: tools/make_runner.py (원본 Stock/.github/workflows/kaggle_direct_hit10_smoke.yml) — 직접 고치지 말 것
+# Security hold: the previous STOCK_GITHUB_TOKEN was uploaded to a Kaggle dataset.
+# Runs remain blocked until a newly rotated token is added as STOCK_GITHUB_TOKEN_ROTATED.
 name: direct_hit10 Kaggle 오프라인 Smoke
 
 on:
   workflow_dispatch:
-
 
 concurrency:
   group: direct-hit10-kaggle-offline
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 jobs:
-
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
+      - name: Rotated token guard
+        env:
+          STOCK_GITHUB_TOKEN_ROTATED: ${{ secrets.STOCK_GITHUB_TOKEN_ROTATED }}
+        run: |
+          test -n "${STOCK_GITHUB_TOKEN_ROTATED:-}" || {
+            echo "::error::Security hold: create STOCK_GITHUB_TOKEN_ROTATED only after revoking the previously exposed token."
+            exit 1
+          }
+
       - uses: actions/checkout@v4
         with:
           repository: suoarman-cpu/Stock
-          token: ${{ secrets.STOCK_GITHUB_TOKEN }}
-          ref: experiment/kaggle-direct-hit10-v1
+          token: ${{ secrets.STOCK_GITHUB_TOKEN_ROTATED }}
+          ref: 621d18b
 
       - uses: actions/setup-python@v5
         with:
@@ -38,5 +45,5 @@ jobs:
       - name: 데이터·코드 전달 및 오프라인 Smoke 실행
         env:
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-          STOCK_TOKEN: ${{ secrets.STOCK_GITHUB_TOKEN }}
+          STOCK_TOKEN: ${{ secrets.STOCK_GITHUB_TOKEN_ROTATED }}
         run: python -u kaggle/direct_hit10/runner_build.py
