@@ -52,7 +52,7 @@ jobs:
           code="notebook40fd7c933b.ipynb"
           (out/code).write_text(json.dumps(nb,ensure_ascii=False))
           meta={
-            "id":"suoarman/notebook40fd7c933b",
+            "id":"suoarman/direct-hit10-smoke",
             "title":"direct_hit10 제한 Smoke 시험",
             "code_file":code,
             "language":"python",
@@ -76,7 +76,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ref="suoarman/notebook40fd7c933b"
+          ref="suoarman/direct-hit10-smoke"
           for i in $(seq 1 150); do
             status="$(kaggle kernels status "$ref" 2>&1 || true)"
             echo "[$i/150] $status"
@@ -98,7 +98,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/direct-hit10-output
-          kaggle kernels output suoarman/notebook40fd7c933b -p /tmp/direct-hit10-output
+          kaggle kernels output suoarman/direct-hit10-smoke -p /tmp/direct-hit10-output
           python - <<'PY'
           import pathlib,json
           root=pathlib.Path("/tmp/direct-hit10-output")
