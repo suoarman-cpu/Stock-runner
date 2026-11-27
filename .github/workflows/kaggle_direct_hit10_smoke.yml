@@ -48,6 +48,22 @@ jobs:
           if not any("--smoke" in s for s in sources): raise RuntimeError("Smoke 실행 셀을 찾지 못함")
           if not any("--budget-hours 11" in s for s in sources): raise RuntimeError("전체 학습 셀 존재 확인 실패 — 안전 중단")
           nb["cells"]=cells[:5]
+          # Kaggle CLI로 push한 노트북에는 UI의 Add-ons > Secrets가 자동 연결되지 않음.
+          # GitHub PAT는 별도 비공개 Kaggle Dataset input에서 읽도록 변경.
+          for cell in nb["cells"]:
+              if cell.get("cell_type") == "markdown":
+                  cell["source"] = [s.replace(
+                      "Kaggle Notebook의 Add-ons/Secrets에 `STOCK_GITHUB_TOKEN` 이름으로 GitHub Fine-grained PAT를 등록합니다.",
+                      "GitHub 인증은 비공개 Kaggle Dataset stock-github-auth의 credential.txt에서 읽습니다."
+                  ) for s in cell.get("source", [])]
+              if cell.get("cell_type") == "code":
+                  src = "".join(cell.get("source", []))
+                  src = src.replace("from kaggle_secrets import UserSecretsClient\\n", "")
+                  src = src.replace(
+                      "TOKEN = UserSecretsClient().get_secret('STOCK_GITHUB_TOKEN')",
+                      "TOKEN = open('/kaggle/input/stock-github-auth/credential.txt', encoding='utf-8').read().strip()"
+                  )
+                  cell["source"] = src.splitlines(keepends=True)
           out=pathlib.Path("/tmp/direct-hit10")
           code="notebook40fd7c933b.ipynb"
           (out/code).write_text(json.dumps(nb,ensure_ascii=False))
@@ -59,11 +75,37 @@ jobs:
             "kernel_type":"notebook",
             "is_private":True,
             "enable_gpu":False,
-            "enable_internet":True
+            "enable_internet":True,
+            "dataset_sources":["suoarman/stock-github-auth"]
           }
           (out/"kernel-metadata.json").write_text(json.dumps(meta,ensure_ascii=False,indent=2))
           print("Smoke 전용 노트북 생성 완료: 기존 5개 셀만 포함, 전체 학습 셀 제외")
           PY
+
+      - name: GitHub 읽기 토큰을 비공개 Kaggle Dataset으로 전달
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          STOCK_GITHUB_TOKEN: ${{ secrets.STOCK_GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${STOCK_GITHUB_TOKEN:-}" || { echo "::error::STOCK_GITHUB_TOKEN Secret 누락"; exit 1; }
+          mkdir -p /tmp/stock-github-auth
+          printf '%s' "$STOCK_GITHUB_TOKEN" > /tmp/stock-github-auth/credential.txt
+          chmod 600 /tmp/stock-github-auth/credential.txt
+          cat > /tmp/stock-github-auth/dataset-metadata.json <<'JSON'
+          {
+            "title": "Stock GitHub Auth",
+            "id": "suoarman/stock-github-auth",
+            "licenses": [{"name": "CC0-1.0"}]
+          }
+          JSON
+          if kaggle datasets status suoarman/stock-github-auth >/dev/null 2>&1; then
+            kaggle datasets version -p /tmp/stock-github-auth -m "Refresh private read-only access credential" --delete-old-versions -q -t
+          else
+            kaggle datasets create -p /tmp/stock-github-auth -q -t
+          fi
+          rm -f /tmp/stock-github-auth/credential.txt
 
       - name: Kaggle에 Smoke 버전 제출
         env:
