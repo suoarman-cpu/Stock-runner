@@ -2,6 +2,10 @@ name: direct_hit10 Kaggle 제한 Smoke 시험
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/kaggle_direct_hit10_smoke.yml'
 
 permissions:
   contents: read
