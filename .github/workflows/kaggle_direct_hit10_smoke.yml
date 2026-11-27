@@ -105,8 +105,16 @@ jobs:
                                       if isinstance(item,list): print(f"[{p.name} cell {ci}] {''.join(item)[:4000]}")
                       elif obj is not None:
                           print(f"[{p.name}] {json.dumps(obj,ensure_ascii=False)[:4000]}")
+                      elif p.suffix.lower()==".log":
+                          try:
+                              entries=json.loads(p.read_text(errors="replace"))
+                              for entry in entries:
+                                  data=entry.get("data","")
+                                  print(f"[{p.name} {entry.get('stream_name')}] {data[:20000]}")
+                          except Exception:
+                              print(f"[{p.name}] {p.read_text(errors='replace')[:20000]}")
                       else:
-                          print(f"[{p.name}] {p.read_text(errors='replace')[:4000]}")
+                          print(f"[{p.name}] {p.read_text(errors='replace')[:20000]}")
                   except Exception as e:
                       print(f"[{p.name}] 진단 읽기 실패: {e}")
           PY
