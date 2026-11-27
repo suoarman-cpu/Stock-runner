@@ -1,0 +1,46 @@
+name: Kaggle 노트북 안전 점검
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/kaggle_notebook_inspect.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Kaggle CLI 설치
+        run: python -m pip install --disable-pip-version-check kaggle
+      - name: 내 노트북 메타데이터 및 첫 셀 확인
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/kaggle-inspect
+          for ref in suoarman/notebook3cfc6b7fe5 suoarman/notebook40fd7c933b; do
+            dir="/tmp/kaggle-inspect/${ref##*/}"
+            mkdir -p "$dir"
+            echo "===== PULL $ref ====="
+            kaggle kernels pull "$ref" -p "$dir"
+            python - "$dir" "$ref" <<'PY'
+          import json, pathlib, sys
+          d=pathlib.Path(sys.argv[1]); ref=sys.argv[2]
+          meta=json.loads((d/'kernel-metadata.json').read_text())
+          nb=json.loads(next(d.glob('*.ipynb')).read_text())
+          print("REF:", ref)
+          print("METADATA:", json.dumps({k:meta.get(k) for k in ("id","title","code_file","language","kernel_type","is_private","enable_gpu","enable_internet")}, ensure_ascii=False))
+          for i,c in enumerate(nb.get("cells",[])[:4]):
+              src="".join(c.get("source",[]))
+              print(f"CELL {i} [{c.get('cell_type')}]:", src[:1200].replace("\n"," | "))
+          PY
+          done
