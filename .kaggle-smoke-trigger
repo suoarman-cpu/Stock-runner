@@ -1,1 +1,1 @@
-Eighth run: verify uploaded payload name; SHA256 is checked inside Kaggle.
+Ninth run: handle malformed CSV extra columns from Kaggle CLI safely.
