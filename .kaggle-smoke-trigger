@@ -1,1 +1,1 @@
-Eleventh run: strip Kaggle pagination token from CSV before parsing.
+Twelfth run: paginate all Kaggle dataset file records to find payload.
